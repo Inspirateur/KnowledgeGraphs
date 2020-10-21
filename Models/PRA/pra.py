@@ -124,13 +124,10 @@ class PRA(KG):
 		targets = Counter()
 		for i in range(50):
 			node = h
-			visited = {}
 			for r in path:
-				if r not in self.graph[node] or all(neigh in visited for neigh in self.graph[node][r]):
+				if r not in self.graph[node]:
 					break
 				node = choice(self.graph[node][r])
-				while node in visited:
-					node = choice(self.graph[node][r])
 			else:
 				targets[node] += 1
 		return targets
@@ -146,9 +143,8 @@ class PRA(KG):
 				paths = self.paths.get(r, dict())
 				for path, weight in paths.items():
 					targets = self.reach(h, path)
-					if targets:
-						total = sum(targets.values())
-						for t, w in targets.items():
-							pred[t] += weight*w/total
+					total = sum(targets.values())
+					for t, w in targets.items():
+						pred[t] += weight*w/total
 			preds.append([self.emap.rget(p) for p, _ in pred.most_common(n)])
 		return preds
