@@ -33,7 +33,7 @@ class PRA(KG):
 	# id <=> relations
 	rmap: IMap
 
-	def __init__(self, depth=5, ppr=50):
+	def __init__(self, depth=3, ppr=50):
 		self.depth = max(2, depth)
 		self.ppr = ppr
 
