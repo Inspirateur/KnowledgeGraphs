@@ -1,7 +1,7 @@
 from collections import defaultdict, Counter, deque
-from typing import Dict, List, Tuple
 import pickle
 from random import choice
+from typing import Dict, List, Tuple
 import numpy as np
 from tqdm import tqdm
 from Models.KG import KG

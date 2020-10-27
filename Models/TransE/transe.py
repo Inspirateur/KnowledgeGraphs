@@ -6,13 +6,15 @@ from torch.utils import data as data
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as f
-from tqdm import tqdm, trange
+from tqdm import tqdm
 from Models.KG import KG
 from Structures.imap import IMap
 from Structures.triplet_dataset import TripleData
 from visualisation import plot_entity
 
 
+# see https://github.com/python/mypy/issues/8795
+# noinspection PyAbstractClass
 class TransEModule(nn.Module):
 	def __init__(self, v_e, v_r, dim):
 		nn.Module.__init__(self)
