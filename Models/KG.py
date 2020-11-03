@@ -62,8 +62,9 @@ def eval_link_completion(n, dataset: str, kg: KG):
 	print(f"Evaluating {kg.__class__.__name__} KG on link completion:")
 	train, valid, test = load_dataset(dataset)
 	try:
-		kg.load(train, valid, dataset)
-	except FileNotFoundError:
+		# kg.load(train, valid, dataset)
+		kg.train(train, valid, dataset)
+	except (FileNotFoundError, NotImplementedError):
 		kg.train(train, valid, dataset)
 	acc = kg.eval_link_completion(n, test)
 	print(f"Hit@{n} Accuracy = {acc:.2%}")
@@ -75,8 +76,8 @@ def browse_mistakes(n, dataset: str, kg: KG):
 	train, valid, test = load_dataset(dataset)
 	graph = Graph3D()
 	graph.add(*train)
-	# kg.train(train, valid)
-	kg.load(train, valid)
+	# kg.train(train, valid, dataset)
+	kg.load(train, valid, dataset)
 
 	# get all mistakes made by the model
 	print("Gathering every mistakes...", end=" ")

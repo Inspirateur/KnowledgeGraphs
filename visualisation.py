@@ -1,10 +1,9 @@
 from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
-from tensorboard.plugins import projector
-from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
 from tqdm import tqdm
-from scipy.sparse import csr_matrix, lil_matrix
+from scipy.sparse import lil_matrix
 from scipy.sparse.csgraph import dijkstra
 import networkx as nx
 from datasets import load_dataset

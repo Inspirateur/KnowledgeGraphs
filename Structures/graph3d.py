@@ -1,4 +1,5 @@
 from collections import defaultdict
+from random import choice, randint
 from Structures.imap import IMap
 
 
@@ -61,3 +62,30 @@ class Graph3D:
 				res[h][r].append(t)
 			res[h] = dict(res[h])
 		return res
+
+	def random_walks(self, start, depth, n):
+		# <path, <end_node, count>>
+		paths = defaultdict(lambda: defaultdict(float))
+		# if the node is unknown, return empty paths
+		if start not in self:
+			return paths
+		# for each path
+		for i in range(n):
+			path = []
+			node = start
+			# walk a random path with random depth (up to depth)
+			for d in range(randint(2, depth)):
+				_r, neigh = choice(self[node])
+				path.append(_r)
+				node = neigh
+			# pad every paths with 0 (for batching purposes)
+			path += [0]*(depth-len(path))
+			# add 1 for the end node in the path distribution
+			paths[tuple(path)][node] += 1
+
+		# normalize path distributions
+		for path in paths:
+			total = sum(paths[path].values())
+			for node in paths[path]:
+				paths[path][node] = paths[path][node]/total
+		return paths

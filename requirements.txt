@@ -1,0 +1,7 @@
+tqdm
+torch==1.5
+scipy
+numpy
+matplotlib
+tensorboardX
+networkx

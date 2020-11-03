@@ -46,55 +46,27 @@ class TripleNData(torchdata.Dataset):
 
 
 class TriplePathsData(torchdata.Dataset):
-	def __init__(self, dataset, graph: Graph3D, depth, ppr):
+	def __init__(self, dataset, graph: Graph3D, depth, walks):
 		self.dataset = dataset
 		self.graph = graph
 		self.depth = depth
-		self.ppr = ppr
+		self.walks = walks
 
 	def __len__(self):
 		return len(self.dataset)
 
 	def __getitem__(self, item):
 		h, r, t = self.dataset[item]
-		paths = defaultdict(lambda: defaultdict(float))
-		# for every target and direct relation from h
-		for r0, node0 in self.graph[h]:
-			# we skip the connexion <h, r, t> we're training on
-			if node0 == t:
-				continue
-			# walk ppr (paths per relations) depth-limited paths
-			for i in range(self.ppr):
-				visited = {h}
-				path = [r0]
-				node = t
-				try:
-					# walk a depth limited random path
-					for d in range(self.depth - 1):
-						if all(neigh in visited for _, neigh in self.graph[node]):
-							raise ValueError("Walk is forced to cycle")
-						_r, neigh = choice(self.graph[node])
-						while neigh in visited:
-							_r, neigh = choice(self.graph[node])
-						path.append(_r)
-						visited.add(node)
-						node = neigh
-						# break before the end if we reach the target
-						if neigh == t:
-							break
-					# add 1 for the end node in the path distribution
-					paths[tuple(path)][node] += 1
-				except ValueError:
-					pass
-		# normalize path distriubtions with softmax
-		for path in paths:
-			total = sum(exp(count) for count in paths[path].values())
-			for node in paths[path]:
-				paths[path][node] = exp(paths[path][node]) / total
-		# path score = softmax(prob of reaching t with path)
+		paths = self.graph.random_walks(h, self.depth, self.walks)
+		# path score = prob of reaching t with path
 		path_list = []
 		path_scores = []
 		for path in paths:
 			path_list.append(path)
-			path_scores.append(paths[path][t])
-		return r, path_list, path_scores
+			path_scores.append(paths[path][self.graph.emap[t]])
+		# normalize path scores
+		total = sum(path_scores)
+		if total:
+			for i in range(len(path_scores)):
+				path_scores[i] /= total
+		return self.graph.rmap[r], path_list, path_scores
