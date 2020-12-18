@@ -41,6 +41,11 @@ def load_dataset(d: int):
 				h = labels[h]
 			if t in labels:
 				t = labels[t]
+			r = r.split("/")
+			if len(r) > 3:
+				r = f"{r[0]}/{r[-2]}/{r[-1]}"
+			else:
+				r = "/".join(r)
 			return h, r, t
 
 		with open("Datasets/FB15k-237/train.txt", "r") as ftrain:

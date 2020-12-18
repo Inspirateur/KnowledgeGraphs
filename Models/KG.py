@@ -1,4 +1,5 @@
 import itertools
+import cProfile
 from typing import List, Tuple
 import json
 import readline
@@ -17,17 +18,31 @@ class KG:
 		raise NotImplementedError("")
 
 	def eval_link_completion(self, n, test):
+		# prepare the test data
 		test_x = []
 		test_y = []
 		for h, r, t in test:
 			test_x.append((h, r))
 			test_y.append(t)
+		# get predictions
 		preds = self.link_completion(n, test_x)
 		assert len(test_y) == len(preds)
-		acc = None
+		# evaluate
+		metrics = {"MAP": 0.}
+		hits = [1, 3, 10]
+		metrics.update({f"Hit@{i}": 0. for i in hits})
 		if len(test_y):
-			acc = sum(is_top_n(n, t, p) for t, p in zip(test_y, preds))/len(test_y)
-		return acc
+			for t, p in zip(test_y, preds):
+				try:
+					i = p.index(t)
+					for hit in hits:
+						metrics[f"Hit@{hit}"] += int(i < hit)
+					metrics["MAP"] += 1/(i+1)
+				except ValueError:
+					pass
+		for metric in metrics:
+			metrics[metric] /= len(test_y)
+		return metrics
 
 
 def is_top_n(n, target, preds):
@@ -59,16 +74,16 @@ def hyper_train(n, dataset: str, kg_class: KG.__class__, hypers: dict):
 
 
 def eval_link_completion(n, dataset: str, kg: KG):
+	# TODO: give evaluation on Hit@1, 3, 10, and MAP which is an average of 1/position of correct answer
 	print(f"Evaluating {kg.__class__.__name__} KG on link completion:")
 	train, valid, test = load_dataset(dataset)
 	try:
-		# kg.load(train, valid, dataset)
-		kg.train(train, valid, dataset)
+		kg.load(train, valid, dataset)
 	except (FileNotFoundError, NotImplementedError):
 		kg.train(train, valid, dataset)
-	acc = kg.eval_link_completion(n, test)
-	print(f"Hit@{n} Accuracy = {acc:.2%}")
-	return acc
+	metrics = kg.eval_link_completion(n, test)
+	print(", ".join(f"{m} = {s:.1%}" for m, s in metrics.items()))
+	return metrics
 
 
 def browse_mistakes(n, dataset: str, kg: KG):

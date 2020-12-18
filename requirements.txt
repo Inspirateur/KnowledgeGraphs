@@ -1,7 +1,11 @@
 tqdm
-torch==1.5
+torch
 scipy
 numpy
+pandas
 matplotlib
 tensorboardX
 networkx
+dash
+plotly
+unidecode
