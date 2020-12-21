@@ -1,6 +1,7 @@
 from collections import deque, defaultdict
 import copy
 import functools
+import os.path
 from random import choice
 from typing import List
 import sys
@@ -16,6 +17,7 @@ from Structures.graph3d import Graph3D
 from Structures.triplet_dataset import TriplePathCtxData
 from Structures.graph import targets
 from Structures.imap import IMap
+import Models.APRA.apra_visualize as plot
 
 
 class CharLevelEncoder(nn.Module):
@@ -24,15 +26,22 @@ class CharLevelEncoder(nn.Module):
 		self.device = device
 		self.embed_size = embed_size
 		self.channels = 8
-		self.embedding = nn.Embedding(cvoc, self.channels)
-		self.conv1 = nn.Conv1d(8, 16, kernel_size=5, padding=2)
-		self.pool1 = nn.MaxPool1d(3, padding=1)
-		self.conv2 = nn.Conv1d(16, 32, kernel_size=3, padding=1)
-		self.pool2 = nn.MaxPool1d(3, padding=1)
-		self.conv3 = nn.Conv1d(32, 64, kernel_size=3, padding=1)
-		self.pool3 = nn.MaxPool1d(3, padding=1)
-		self.conv4 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
-		self.poolf = nn.AdaptiveAvgPool1d(1)
+		self.cvoc = cvoc
+		self.embedding = nn.Embedding(len(cvoc), self.channels)
+		self.convs = nn.Sequential(
+			nn.Conv1d(8, 16, kernel_size=5, padding=2),
+			nn.LeakyReLU(),
+			nn.MaxPool1d(3, padding=1),
+			nn.Conv1d(16, 32, kernel_size=3, padding=1),
+			nn.LeakyReLU(),
+			nn.MaxPool1d(3, padding=1),
+			nn.Conv1d(32, 64, kernel_size=3, padding=1),
+			nn.LeakyReLU(),
+			nn.MaxPool1d(3, padding=1),
+			nn.Conv1d(64, 128, kernel_size=3, padding=1),
+			nn.LeakyReLU(),
+			nn.AdaptiveAvgPool1d(1),
+		)
 		self.ff = nn.Linear(128, embed_size)
 
 	def forward(self, seq):
@@ -43,20 +52,13 @@ class CharLevelEncoder(nn.Module):
 		"""
 		# [batch, channels, l]
 		seq = self.embedding(seq.reshape(-1)).reshape(seq.shape[1], -1, seq.shape[0])
-		out1 = torch.relu(self.conv1(seq))
-		out1p = self.pool1(out1)
-		out2 = torch.relu(self.conv2(out1p))
-		out2p = self.pool2(out2)
-		out3 = torch.relu(self.conv3(out2p))
-		out3p = self.pool3(out3)
-		out4 = torch.relu(self.conv4(out3p))
-		out4p = self.poolf(out4).squeeze()
-		outf = torch.relu(self.ff(out4p))
-		return outf
+		out = self.convs(seq).squeeze()
+		out = self.ff(out)
+		return out
 
 
 class RelationEncoder(nn.Module):
-	def __init__(self, embed_size, num_layers=6):
+	def __init__(self, embed_size, num_layers=4):
 		super().__init__()
 		self.path_encoder = nn.GRU(embed_size, embed_size, 2)
 		self.layers = nn.TransformerEncoder(
@@ -92,11 +94,13 @@ class RelationEncoder(nn.Module):
 class APRAModule(nn.Module):
 	def __init__(self, cvoc, embed_size, device):
 		super().__init__()
-		self.f1 = nn.Linear(embed_size*3, embed_size)
-		self.f2 = nn.Linear(embed_size, 10)
-		self.f3 = nn.Linear(10, 2)
 		self.embed = CharLevelEncoder(cvoc, embed_size, device)
 		self.rel_embed = RelationEncoder(embed_size)
+		self.ff = nn.Sequential(
+			nn.Linear(embed_size*3, embed_size),
+			nn.LeakyReLU(),
+			nn.Linear(embed_size, 2)
+		)
 
 	def embed_paths(self, paths: torch.Tensor):
 		"""
@@ -126,12 +130,8 @@ class APRAModule(nn.Module):
 		t = self.embed(t)
 		# [batch, embed size*3]
 		out = torch.cat([h, r, t], dim=1)
-		# [batch, embed size]
-		out = torch.relu(self.f1(out))
-		# [batch, 10]
-		out = torch.relu(self.f2(out))
 		# [batch, 2]
-		out = self.f3(out)
+		out = self.ff(out)
 		return out
 
 
@@ -143,7 +143,7 @@ class APRA(KG):
 	optimizer: optim
 	graph: Graph3D
 
-	def __init__(self, depth=3, embed_size=128, lr=0.01):
+	def __init__(self, depth=3, embed_size=64, lr=0.001):
 		self.path = "Models/APRA/save.pt"
 		if torch.cuda.is_available():
 			print("Using the GPU")
@@ -156,11 +156,16 @@ class APRA(KG):
 		self.lr = lr
 		self.batch_size = 2
 		self.neg_per_pos = 5
+		self.view_every = 200
 		self.cmap = IMap("abcdefghijklmnopqrstuvwxyz-/'. ")
 		self.loss = nn.CrossEntropyLoss(torch.tensor([1, self.neg_per_pos], dtype=torch.float, device=self.device))
 
 	def epoch(self, it, train=True):
 		roll_loss = deque(maxlen=50 if train else None)
+		i = 0
+		plot.plt.ion()
+		figw = plot.plt.figure(figsize=(15, 8))
+		figg = plot.plt.figure(figsize=(15, 8))
 		for h, r, t, paths, labels in it:
 			h, r, t, paths, labels = (
 				h.to(self.device), r.to(self.device), t.to(self.device),
@@ -174,6 +179,14 @@ class APRA(KG):
 			# learn
 			if train:
 				loss.backward()
+				if i % self.view_every == 0:
+					figw.clear()
+					figg.clear()
+					plot.view_model(figw, self.module, i, grad=False)
+					plot.view_model(figg, self.module, i, grad=True)
+					figw.canvas.draw()
+					figg.canvas.draw()
+				i += 1
 				self.optimizer.step()
 			roll_loss.append(loss.item())
 			# display loss
@@ -211,7 +224,7 @@ class APRA(KG):
 		)
 
 		# prepare the model
-		self.module = APRAModule(len(self.cmap), self.embed_size, self.device).to(self.device)
+		self.module = APRAModule(self.cmap, self.embed_size, self.device).to(self.device)
 		self.optimizer = optim.Adam(self.module.parameters(), lr=self.lr)
 		# train it
 		epoch = 1
@@ -244,9 +257,11 @@ class APRA(KG):
 		torch.save(self.module, self.path)
 
 	def load(self, train, valid, dataset: str):
+		if not os.path.isfile(self.path):
+			raise FileNotFoundError("")
 		self.graph = Graph3D()
 		self.graph.add(*train)
-		self.module = APRAModule(len(self.cmap), self.embed_size, self.device).to(self.device)
+		self.module = APRAModule(self.cmap, self.embed_size, self.device).to(self.device)
 		self.optimizer = optim.Adam(self.module.parameters(), lr=self.lr)
 		self.module = torch.load(self.path)
 
