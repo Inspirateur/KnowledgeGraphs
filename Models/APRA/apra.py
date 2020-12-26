@@ -5,6 +5,7 @@ import os.path
 from random import choice
 from typing import List
 import sys
+from linformer_pytorch import Linformer, Padder
 import torch
 from torch.utils import data as data
 from torch.nn.utils.rnn import pad_sequence
@@ -58,12 +59,14 @@ class CharLevelEncoder(nn.Module):
 
 
 class RelationEncoder(nn.Module):
-	def __init__(self, embed_size, num_layers=4):
+	def __init__(self, embed_size, num_layers=2):
 		super().__init__()
 		self.path_encoder = nn.GRU(embed_size, embed_size, 2)
-		self.layers = nn.TransformerEncoder(
-			nn.TransformerEncoderLayer(embed_size, 8), num_layers
-		)
+		# FIXME: computing a new representation of r and every paths for each layer is very expensive (attention bottleneck)
+		#  need to use a cheaper alternative
+		self.layers = Padder(Linformer(
+			256, embed_size, dim_d=None, dim_k=embed_size*2, dim_ff=embed_size*2, nhead=4, depth=num_layers
+		))
 
 	def forward(self, r, paths):
 		"""
@@ -80,13 +83,13 @@ class RelationEncoder(nn.Module):
 		# take the output of the GRU at the last timestep
 		paths = paths[-1].reshape(n, batch, embed_size)
 		# concatenate r and the encoded paths
-		# [n+1, batch, embed size]
-		src = torch.cat([r.unsqueeze(0), paths], dim=0)
-		# pass it through a transformer and retrieve only the representation of r
-		# [n+1, batch, embed size]
+		# [batch, n+1, embed size]
+		src = torch.cat([r.unsqueeze(0), paths], dim=0).transpose(0, 1)
+		# pass it through a transformer-like model and retrieve only the representation of r
+		# [batch, n+1, embed size]
 		src_encoded = self.layers(src)
 		# [batch, embed size]
-		return src_encoded[0]
+		return src_encoded[:, 0, :]
 
 
 # see https://github.com/python/mypy/issues/8795
@@ -156,16 +159,17 @@ class APRA(KG):
 		self.lr = lr
 		self.batch_size = 2
 		self.neg_per_pos = 5
-		self.view_every = 200
+		self.view_every = 0
 		self.cmap = IMap("abcdefghijklmnopqrstuvwxyz-/'. ")
 		self.loss = nn.CrossEntropyLoss(torch.tensor([1, self.neg_per_pos], dtype=torch.float, device=self.device))
 
 	def epoch(self, it, train=True):
 		roll_loss = deque(maxlen=50 if train else None)
 		i = 0
-		plot.plt.ion()
-		figw = plot.plt.figure(figsize=(15, 8))
-		figg = plot.plt.figure(figsize=(15, 8))
+		if train and self.view_every:
+			plot.plt.ion()
+			figw = plot.plt.figure(figsize=(15, 8))
+			figg = plot.plt.figure(figsize=(15, 8))
 		for h, r, t, paths, labels in it:
 			h, r, t, paths, labels = (
 				h.to(self.device), r.to(self.device), t.to(self.device),
@@ -179,8 +183,10 @@ class APRA(KG):
 			# learn
 			if train:
 				loss.backward()
-				if i % self.view_every == 0:
+				if self.view_every and i % self.view_every == 0:
+					# noinspection PyUnboundLocalVariable
 					figw.clear()
+					# noinspection PyUnboundLocalVariable
 					figg.clear()
 					plot.view_model(figw, self.module, i, grad=False)
 					plot.view_model(figg, self.module, i, grad=True)
@@ -216,7 +222,7 @@ class APRA(KG):
 
 		train_batch = data.DataLoader(
 			TriplePathCtxData(train, self.graph, self.depth, bad_exs, self.cmap, self.neg_per_pos),
-			batch_size=self.batch_size, collate_fn=collate_fn, pin_memory=True, num_workers=1
+			batch_size=self.batch_size, collate_fn=collate_fn, pin_memory=True
 		)
 		valid_batch = data.DataLoader(
 			TriplePathCtxData(valid, self.graph, self.depth, bad_exs, self.cmap, self.neg_per_pos),
@@ -254,7 +260,8 @@ class APRA(KG):
 				p -= 1
 			epoch += 1
 			print()
-		torch.save(self.module, self.path)
+
+		# torch.save(self.module, self.path)
 
 	def load(self, train, valid, dataset: str):
 		if not os.path.isfile(self.path):
@@ -271,23 +278,26 @@ class APRA(KG):
 		self.module.eval()
 		with torch.no_grad():
 			for h, r in tqdm(couples, desc="Evaluating", ncols=140):
-				# if h is not known, return random candidates
+				# if h is not known, return candidates based on r, and fill randomly if not enough
+				candidates = self.graph.r_t[r]
 				if h not in self.graph:
-					preds.append([choice(self.graph) for _ in range(n)])
-					continue
-				# for each known_candidates
-				candidates = {}
-				for t in self.graph.r_t[r]:
-					# get random paths
-					paths = self.graph.random_paths(h, t, self.depth)
-					# score the triplet h, r, t
-					if not paths:
-						candidates[t] = 0
-					else:
-						candidates[t] = self.module([h], [r], [t], [paths])
-				# score the paths with the model
-				# rank them
-				preds.append([
-					idx2e[node] for node, _ in sorted(candidates.items(), key=lambda kv: kv[1], reverse=True)
-				][:n])
+					pred = candidates[:n]
+				else:
+					# for each known t candidates, collect random paths and use the model to score the candidates
+					paths = self.graph.random_paths(h, candidates, max_depth=self.depth)
+					h = TriplePathCtxData.encode(h, self.cmap).unsqueeze(1)
+					r = TriplePathCtxData.encode(r, self.cmap).unsqueeze(1)
+					scores = []
+					for t in candidates:
+						t = TriplePathCtxData.encode(t, self.cmap).unsqueeze(1)
+						paths_t = TriplePathCtxData.encode_paths(paths[t], self.cmap, self.depth).unsqueeze(3)
+						scores.append(self.module(h, r, t, paths_t)[0].item())
+
+					# score the paths with the model
+					# rank them
+					pred = [
+						idx2e[node] for node, _ in sorted(zip(candidates, scores), key=lambda kv: kv[1], reverse=True)
+					][:n]
+				# complete with random preds at the end if necessary
+				preds.append(pred + [choice(self.graph) for _ in range(n - len(pred))])
 		return preds

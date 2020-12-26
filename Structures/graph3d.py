@@ -1,5 +1,5 @@
 from collections import defaultdict
-from random import random, choice
+from Pyewacket import choice
 import readline
 from Structures.imap import IMap
 

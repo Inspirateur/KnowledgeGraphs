@@ -74,7 +74,6 @@ def hyper_train(n, dataset: str, kg_class: KG.__class__, hypers: dict):
 
 
 def eval_link_completion(n, dataset: str, kg: KG):
-	# TODO: give evaluation on Hit@1, 3, 10, and MAP which is an average of 1/position of correct answer
 	print(f"Evaluating {kg.__class__.__name__} KG on link completion:")
 	train, valid, test = load_dataset(dataset)
 	try:

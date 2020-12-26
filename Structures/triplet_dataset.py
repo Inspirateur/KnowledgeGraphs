@@ -83,38 +83,55 @@ class TriplePathCtxData(torchdata.IterableDataset):
 		self.cmap = cmap
 
 	def __len__(self):
-		return len(self.dataset)*(self.neg_per_pos+1)
+		# return len(self.dataset)*(self.neg_per_pos+1)
+		return 500*(self.neg_per_pos+1)
 
-	def _encode(self, txt):
+	@staticmethod
+	def encode(txt, cmap):
 		if not txt:
 			return torch.tensor([0])
 		return torch.tensor([
-			self.cmap[c]
+			cmap[c]
 			for c in unidecode.unidecode(txt.replace('_', ' ').lower())
 		])
 
-	def _encode_paths(self, paths):
+	@staticmethod
+	def encode_paths(paths, cmap, depth):
 		if not paths:
-			return torch.zeros((1, 1, self.depth), dtype=torch.long)
+			return torch.zeros((1, 1, depth), dtype=torch.long)
 		return pad_sequence([
-			pad_sequence([self._encode(r) for r in path])
+			pad_sequence([TriplePathCtxData.encode(r, cmap) for r in path])
 			for path in paths
 		])
 
 	def __iter__(self):
 		worker_info = torch.utils.data.get_worker_info()
+		# lendata = len(self.dataset)
+		lendata = 500
 		if worker_info is None:
-			s = slice(len(self.dataset))
+			s = slice(lendata)
 		else:
-			per_worker = len(self.dataset)/worker_info.num_workers
+			per_worker = lendata/worker_info.num_workers
 			it_start = int(worker_info.id*per_worker)
 			it_end = int((worker_info.id+1)*per_worker)
 			s = slice(it_start, it_end)
 		for h, r, t in self.dataset[s]:
-			bad_exs = sample(self.bad_exs[self.graph.emap[h]], self.neg_per_pos)
+			bad_exs = self.bad_exs[self.graph.emap[h]]
+			bad_exs = sample(bad_exs, min(self.neg_per_pos, len(bad_exs)))
 			paths = self.graph.random_paths(h, bad_exs+[t], max_depth=self.depth)
-			h = self._encode(h)
-			r = self._encode(r)
-			yield h, r, self._encode(t), self._encode_paths(paths[t]), 1
+			h = TriplePathCtxData.encode(h, self.cmap)
+			r = TriplePathCtxData.encode(r, self.cmap)
+			yield (
+				h, r,
+				TriplePathCtxData.encode(t, self.cmap),
+				TriplePathCtxData.encode_paths(paths[t], self.cmap, self.depth),
+				1
+			)
 			for bad_t in bad_exs:
-				yield h, r, self._encode(self.graph.emap.rget(bad_t)), self._encode_paths(paths[bad_t]), 0
+				# NOTE: is it really ok to yield the same tensors object for h and r ? need to investigate
+				yield (
+					h, r,
+					TriplePathCtxData.encode(self.graph.emap.rget(bad_t), self.cmap),
+					TriplePathCtxData.encode_paths(paths[bad_t], self.cmap, self.depth),
+					0
+				)
